@@ -5,7 +5,7 @@ using UnityEngine.Rendering;
 
 public class Grid : MonoBehaviour
 {
-    public bool onlyDisplayPathGizmos;
+    public bool disaplyGridGizmos;
     public Transform player;             //The player, or rather the starting node. 
     public Vector2 gridWorldSize;        //The size of the entire grid which the A* agent will calculate on. 
     public float nodeRadius;             //The radius each individual node covers. 
@@ -18,7 +18,7 @@ public class Grid : MonoBehaviour
     float nodeDiameter;                  //The full size of a node. 
     int gridSizeX, gridSizeY;            //The amount of nodes that can fit into the grid both X and Y positioning wise. 
 
-    private void Start()
+    private void Awake()
     {
         nodeDiameter = nodeRadius * 2;
         gridSizeX = Mathf.RoundToInt(gridWorldSize.x / nodeDiameter);   //Checks the amount of nodes that can fit into the grid X wise. We round to int as we can't have like half a node etc. 
@@ -70,48 +70,20 @@ public class Grid : MonoBehaviour
         return neighbours;
     }
 
-    public List<Node> path;  //The path we took to get to the end destination. 
 
     private void OnDrawGizmos()
     {
         Gizmos.DrawWireCube(transform.position, new Vector3(gridWorldSize.x, 1, gridWorldSize.y));
 
-        if (onlyDisplayPathGizmos)
+        if (grid != null && disaplyGridGizmos)
         {
-            if (path != null)
+            foreach (Node node in grid)
             {
-                foreach (Node n in path)
-                {
-                    Gizmos.color = Color.black;
-                    Gizmos.DrawCube(n.worldPosition, Vector3.one * (nodeDiameter - .1f)); //Draws the nodes in cubes with a little spacing between each. 
-                }
+                Gizmos.color = (node.walkable) ? Color.white : Color.red;   //If the node is walkable, it becomes white, else its red.
+                Gizmos.DrawCube(node.worldPosition, Vector3.one * (nodeDiameter - .1f)); //Draws the nodes in cubes with a little spacing between each. 
             }
-            
         }
-        else
-        {
-            if (grid != null)
-            {
-                Node playerNode = NodeFromWorldPoint(player.position);
-                foreach (Node node in grid)
-                {
-                    Gizmos.color = (node.walkable) ? Color.white : Color.red;   //If the node is walkable, it becomes white, else its red. 
-                    if (playerNode == node)   //If we found the player's node, change his color to Cyan. 
-                    {
-                        Gizmos.color = Color.cyan;
-                    }
 
-                    if (path != null)  //Visualize the path taken to get to the target. 
-                    {
-                        if (path.Contains(node))
-                        {
-                            Gizmos.color = Color.black;
-                        }
-                    }
-                    Gizmos.DrawCube(node.worldPosition, Vector3.one * (nodeDiameter - .1f)); //Draws the nodes in cubes with a little spacing between each. 
-                }
-            }
-        }
     }
 
     public Node NodeFromWorldPoint(Vector3 worldPosition)    //Converts given world position to grid coordinate. 

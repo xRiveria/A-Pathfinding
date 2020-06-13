@@ -3,76 +3,89 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Diagnostics;
+using System.Linq;
 
 public class Pathfinding : MonoBehaviour
 {
-    public Transform seeker, target;         //Who's doing the pathfinding, and what is it's target?
     Grid grid;                               //The grid we're doing the pathfinding on. 
+    PathRequestManager requestManager;
+
 
     private void Awake()
     {
         grid = GetComponent<Grid>();
+        requestManager = GetComponent<PathRequestManager>();
     }
 
-    private void Update()
+    public void StartFindPath(Vector3 startPosition, Vector3 targetPosition)
     {
-        if (Input.GetMouseButtonDown(0))
-        {
-            FindPath(seeker.position, target.position);
-        }
+        StartCoroutine(FindPath(startPosition, targetPosition));
     }
 
-    void FindPath (Vector3 startPosition, Vector3 targetPosition)
+    IEnumerator FindPath (Vector3 startPosition, Vector3 targetPosition)
     {
         Stopwatch sw = new Stopwatch(); //Performance check.
         sw.Start();
 
+        Vector3[] waypoints = new Vector3[0];  //Waypoints that the unit must traverse to get to the end destination. It starts with 1 index with is the start position. 
+        bool pathSuccess = false; 
+
         Node startNode = grid.NodeFromWorldPoint(startPosition);        //Convert the starting object's world position into its corresponding node found in the grid.
         Node targetNode = grid.NodeFromWorldPoint(targetPosition);      //Convert the starting object's world position into its corresponding node found in the grid.
 
-        Heap<Node> openSet = new Heap<Node>(grid.MaxSize);             //The list of nodes that are yet to be evaluated.
-        HashSet<Node> closedSet = new HashSet<Node>();     //The list of nodes that have been searched and thus closed. 
-        openSet.Add(startNode);                            //Add the starting node into the open set as everything begins from there.
 
-        while (openSet.Count > 0)                          //As long as the open set is not empty and still have things to be evaluated.
+        if (startNode.walkable && targetNode.walkable)    //We make sure that the nodes are walkable in the first place, else there's no chance of finding a path.
         {
-            Node currentNode = openSet.RemoveFirst();                 //First node will be equal to the first element in the open set. 
-            
-            closedSet.Add(currentNode);           //We add the new node to the closed set as it has been evaluated. 
+            Heap<Node> openSet = new Heap<Node>(grid.MaxSize);             //The list of nodes that are yet to be evaluated.
+            HashSet<Node> closedSet = new HashSet<Node>();     //The list of nodes that have been searched and thus closed. 
+            openSet.Add(startNode);                            //Add the starting node into the open set as everything begins from there.
 
-            if (currentNode == targetNode)        //If we have found our target node, we return from the loop. Complete! 
+            while (openSet.Count > 0)                          //As long as the open set is not empty and still have things to be evaluated.
             {
-                sw.Stop();
-                print("Path Found: " + sw.ElapsedMilliseconds + " ms");
+                Node currentNode = openSet.RemoveFirst();                 //First node will be equal to the first element in the open set. 
 
-                RetracePath(startNode, targetNode);   //Retrace the path we took from the start node to the end node. 
-                return;
-            }
+                closedSet.Add(currentNode);           //We add the new node to the closed set as it has been evaluated. 
 
-
-            foreach (Node neighbour in grid.GetNeighbours(currentNode))   //For each neighbouring node that was found relative to the current node.
-            {
-                if (neighbour.walkable != true || closedSet.Contains(neighbour))  //If it cannot be walked on or if the neighbouring node has already been evaluated, we skip it. 
+                if (currentNode == targetNode)        //If we have found our target node, we return from the loop. Complete! 
                 {
-                    continue;
+                    sw.Stop();
+                    print("Path Found: " + sw.ElapsedMilliseconds + " ms");
+
+                    pathSuccess = true;
+                    break;
                 }
-                int newMovementCostToNeighbour = currentNode.gCost + GetDistance(currentNode, neighbour);  //Current node's distance from the start node + current node's distance to the neighbour node. 
-                if (newMovementCostToNeighbour < neighbour.gCost || !openSet.Contains(neighbour))  //If the new movement cost is less than the neighbour node's G cost or if the neighbour isn't in the open set
-                {
-                    neighbour.gCost = newMovementCostToNeighbour;  //New gCost.
-                    neighbour.hCost = GetDistance(neighbour, targetNode);  //New hCost.
-                    neighbour.parent = currentNode;  //Set new parent to the current node. 
 
-                    if (!openSet.Contains(neighbour))  //If the neighbour node isn't in the open set,
+
+                foreach (Node neighbour in grid.GetNeighbours(currentNode))   //For each neighbouring node that was found relative to the current node.
+                {
+                    if (neighbour.walkable != true || closedSet.Contains(neighbour))  //If it cannot be walked on or if the neighbouring node has already been evaluated, we skip it. 
                     {
-                        openSet.Add(neighbour);   //We add it in. 
+                        continue;
+                    }
+                    int newMovementCostToNeighbour = currentNode.gCost + GetDistance(currentNode, neighbour);  //Current node's distance from the start node + current node's distance to the neighbour node. 
+                    if (newMovementCostToNeighbour < neighbour.gCost || !openSet.Contains(neighbour))  //If the new movement cost is less than the neighbour node's G cost or if the neighbour isn't in the open set
+                    {
+                        neighbour.gCost = newMovementCostToNeighbour;  //New gCost.
+                        neighbour.hCost = GetDistance(neighbour, targetNode);  //New hCost.
+                        neighbour.parent = currentNode;  //Set new parent to the current node. 
+
+                        if (!openSet.Contains(neighbour))  //If the neighbour node isn't in the open set,
+                        {
+                            openSet.Add(neighbour);   //We add it in. 
+                        }
                     }
                 }
             }
         }
+        yield return null;
+        if (pathSuccess)
+        {
+            waypoints = RetracePath(startNode, targetNode);   //Retrace the path we took from the start node to the end node. 
+        }
+        requestManager.FinishedProcessingPath(waypoints, pathSuccess);  //Path processing complete. 
     }
 
-    void RetracePath(Node startNode, Node endNode)     //Retrace the path we took from the start node to the end node. 
+    Vector3[] RetracePath(Node startNode, Node endNode)     //Retrace the path we took from the start node to the end node. 
     {
         List<Node> path = new List<Node>();  //The path we took to get to get to the end. 
         Node currentNode = endNode;   //We do this as when we do finish tracing the path, the current node would be the end node itself. 
@@ -81,9 +94,26 @@ public class Pathfinding : MonoBehaviour
             path.Add(currentNode);  //We add the node to the path list. 
             currentNode = currentNode.parent; //We set the current node to be equal to the parent of the node we just added to the list, which wil automatically trace back to the start. 
         }
-        path.Reverse(); //Once we're done, note that the list is in reverse. So we reverse it the right way round. 
-        grid.path = path;
+        Vector3[] waypoints = SimplifyPath(path);  //Find all movement waypoints the unit has to take. 
+        Array.Reverse(waypoints); //Once we're done, note that the list is in reverse. So we reverse it the right way round. 
+        return waypoints;
+    }
 
+    Vector3[] SimplifyPath(List<Node> path) //Waypoints that are created everytime there's a change in trajectories.
+    {
+        List<Vector3> waypoints = new List<Vector3>();     //All created waypoints.
+        Vector2 directionOld = Vector2.zero;               //The old direction the unit was taking.
+
+        for (int i = 1; i < path.Count; i++)               //For each node that was found in the path. We use 1 because 0 is the starting position.
+        {
+            Vector2 directionNew = new Vector2(path[i - 1].gridX - path[i].gridX, path[i - 1].gridY - path[i].gridY);  //We calculate the movement directions here. 
+            if (directionOld != directionNew)              //If the old direction and new direction isn't the same.
+            {
+                waypoints.Add(path[i].worldPosition);      //We add a new waypoint to the list.
+            }
+            directionOld = directionNew;                   //Then, we set the old direction to be equal to the new direction, and the loop repeats.
+        }
+        return waypoints.ToArray();   //Once all waypoints are done, we complete the list and turn it to an array to be returned. 
     }
 
     int GetDistance(Node nodeA, Node nodeB)           //Gets the distance between 2 any given nodes. 
