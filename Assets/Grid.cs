@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -14,6 +15,10 @@ public class Grid : MonoBehaviour
     public LayerMask walkableMask;       //Walkable places.
     public TerrainType[] walkableRegions;
     Dictionary<int, int> walkableRegionsDictionary = new Dictionary<int, int>();  //Tracks all layers with movement penalties and its associated cost.
+    int penaltyMin = int.MaxValue;
+    int penaltyMax = int.MinValue;
+    public int obstacleProximityPenalty = 10; //Penalty for being too close to obstacle/Unwalkables.
+
 
     Node[,] grid;                        //New Grid consisting of a X and Y.          
 
@@ -45,7 +50,7 @@ public class Grid : MonoBehaviour
     {
         grid = new Node[gridSizeX, gridSizeY];   //A brand new grid creation of given amount of X and Y nodes. 
         Vector3 worldBottomLeft = transform.position - Vector3.right * gridWorldSize.x / 2 - Vector3.forward * gridWorldSize.y / 2; //Gets the bottom left corner of the Grid.
-        
+
         for (int x = 0; x < gridSizeX; x++)        //For each node in X...
         {
             for (int y = 0; y < gridSizeY; y++)    //For each node in Y...
@@ -54,20 +59,82 @@ public class Grid : MonoBehaviour
                 bool walkable = !(Physics.CheckSphere(worldPoint, nodeRadius, unwalkableMask));   //Checks if the node collides with a unwalkable mask. 
                 int movementPenalty = 0;
                 //Raycast to find walkable layers will terrain penalties.
-                if (walkable)
+
+                Ray ray = new Ray(worldPoint + Vector3.up * 450, Vector3.down);
+                RaycastHit hit;
+                if (Physics.Raycast(ray, out hit, 500, walkableMask))
                 {
-                    Ray ray = new Ray(worldPoint + Vector3.up * 450, Vector3.down);
-                    RaycastHit hit;
-                    if (Physics.Raycast(ray, out hit, 500, walkableMask))
-                    {
-                        walkableRegionsDictionary.TryGetValue(hit.collider.gameObject.layer, out movementPenalty);   //Trys to get the value of each layers and measure it against the dictionary. Once found, retrieves the movement penalty.
-                    }
+                    walkableRegionsDictionary.TryGetValue(hit.collider.gameObject.layer, out movementPenalty);   //Trys to get the value of each layers and measure it against the dictionary. Once found, retrieves the movement penalty.
                 }
-                
+                if (!walkable)
+                {
+                    movementPenalty += obstacleProximityPenalty;  //Add a obstacle proximity penalty for getting too close to unwalkable obstacles. 
+                }
+
                 grid[x, y] = new Node(walkable, worldPoint, x, y, movementPenalty);  //Actually populate the grid with nodes now that had been created in the world with values such as movement penalty, X and Y location etc. 
             }
         }
+        BlurPenaltyMap(3);
     }    
+
+    void BlurPenaltyMap(int blurSize) //Blur map algorhitm.
+    {
+        int kernalSize = blurSize * 2 + 1;     //Box check size. We must make sure this is an odd number with a box in center.
+        int kernalExtents = (kernalSize - 1) / 2;  //How many squares between the center square to the edge of the kernel.
+
+        int[,] penaltiesHorizontalPass = new int[gridSizeX, gridSizeY]; //Temporary grids to store horizontal and vertical pass values;
+        int[,] penaltiesVerticalPass = new int[gridSizeX, gridSizeY];
+        for (int y = 0; y < gridSizeY; y++)  //Row calculation. We have to loop through all the nodes in the Kernel only for the first loop, while subsequently we can use the number found and minimize calculations.
+        {
+            for (int x = -kernalExtents; x <= kernalExtents; x++) 
+            {
+                int sampleX = Mathf.Clamp(x, 0, kernalExtents); //We want to clamp X to 0 when X is negative so that it will take the value from the first node instead of going out of bounds, up till the max kernal extend.
+                penaltiesHorizontalPass[0, y] += grid[sampleX, y].movementPenalty; //Add the movement penalty from SampleX, Coloumn Y to the horizontal pass at Column 0, Row Y.                  
+            }
+            for (int x = 1; x < gridSizeX; x++) //We start at 1 since we already calculated for Column 0 above. We are now calculating for all remaining columns. 
+            {
+                int removeIndex = Mathf.Clamp(x - kernalExtents - 1, 0, gridSizeX); //Calculate index of the node that is no longer inside the kernal when the kernal shifts along. We once again clamp so it doesn't fall below 0 and doesn't go above maximum. 
+                int addIndex = Mathf.Clamp(x + kernalExtents, 0, gridSizeX - 1); //Calcuate index of the node that has been added to the kernal when the kernal shifts along. 
+
+                //Previous Sum - Value on the Left (Remove Index) + Value on the Right (Add Index)
+                penaltiesHorizontalPass[x, y] = penaltiesHorizontalPass[x - 1, y] - grid[removeIndex, y].movementPenalty + grid[addIndex, y].movementPenalty;
+            }
+        }
+
+        //Repeat above but for columns calculation now. 
+        for (int x = 0; x < gridSizeX; x++)  //Column calculation. We have to loop through all the nodes in the Kernel only for the first loop, while subsequently we can use the number found and minimize calculations.
+        {
+            for (int y = -kernalExtents; y <= kernalExtents; y++)
+            {
+                int sampleY = Mathf.Clamp(x, 0, kernalExtents); 
+                penaltiesVerticalPass[x, 0] += penaltiesHorizontalPass[x, sampleY];                
+            }
+
+            int blurredPenalty = Mathf.RoundToInt((float)penaltiesVerticalPass[x, 0] / (kernalSize * kernalSize)); //Get final blurred penalty for each node. Integer always rounds down, so to be more accurate we will just round to the nearest integer by using Mathf.RoundToInt.
+            grid[x, 0].movementPenalty = blurredPenalty;
+
+            for (int y = 1; y < gridSizeY; y++)  
+            {
+                int removeIndex = Mathf.Clamp(y - kernalExtents - 1, 0, gridSizeY); 
+                int addIndex = Mathf.Clamp(y + kernalExtents, 0, gridSizeY - 1); 
+
+                //Previous Sum - Value on the Left (Remove Index) + Value on the Right (Add Index)
+                penaltiesVerticalPass[x, y] = penaltiesVerticalPass[x, y - 1] - penaltiesHorizontalPass[x, removeIndex] + penaltiesHorizontalPass[x, addIndex];
+                blurredPenalty = Mathf.RoundToInt((float)penaltiesVerticalPass[x, y] / (kernalSize * kernalSize)); //Get final blurred penalty for each node. Integer always rounds down, so to be more accurate we will just round to the nearest integer by using Mathf.RoundToInt.
+                grid[x, y].movementPenalty = blurredPenalty;
+
+                if (blurredPenalty > penaltyMax)  //For visualization.
+                {
+                    penaltyMax = blurredPenalty;
+                }
+                if (blurredPenalty < penaltyMin)
+                {
+                    penaltyMin = blurredPenalty;
+                }
+            }
+        }
+
+    }
 
     public List<Node> GetNeighbours(Node node)  //We can't use arrays as we don't know how many nodes are neighbours. Normally it would be 8, but if its in the corner, it's going to change. 
     {
@@ -101,8 +168,9 @@ public class Grid : MonoBehaviour
         {
             foreach (Node node in grid)
             {
-                Gizmos.color = (node.walkable) ? Color.white : Color.red;   //If the node is walkable, it becomes white, else its red.
-                Gizmos.DrawCube(node.worldPosition, Vector3.one * (nodeDiameter - .1f)); //Draws the nodes in cubes with a little spacing between each. 
+                Gizmos.color = Color.Lerp(Color.white, Color.black, Mathf.InverseLerp(penaltyMin, penaltyMax, node.movementPenalty)); //Fade from white to black depending on the weight.
+                Gizmos.color = (node.walkable) ? Gizmos.color : Color.red;   //If the node is walkable, it stays its original color, else its red.
+                Gizmos.DrawCube(node.worldPosition, Vector3.one * (nodeDiameter)); //Draws the nodes out in the Editor.
             }
         }
 
