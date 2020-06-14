@@ -22,14 +22,16 @@ public class Node : IHeapItem<Node>
     public int gridX;                      //Its position in the grid's X axis.
     public int gridY;                      //Its position in the grid's Y axis. 
     int heapIndex;
+    public int movementPenalty;            //A movement penalty value for different terrain types. 
 
 
-    public Node (bool _walkable, Vector3 _worldPosition, int _gridX, int _gridY)        //Node constructor called when building the game's grid.
+    public Node (bool _walkable, Vector3 _worldPosition, int _gridX, int _gridY, int _penalty)        //Node constructor called when building the game's grid.
     {
         walkable = _walkable;
         worldPosition = _worldPosition;
         gridX = _gridX;
         gridY = _gridY;
+        movementPenalty = _penalty;
     }
 
     public int HeapIndex
